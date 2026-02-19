@@ -1,0 +1,76 @@
+services:
+  # سرویس اصلی دیتابیس
+  postgres:
+    build:
+      context: .               # زمینه ساخت: ریشه پروژه (همان جایی که scripts و configs هستند)
+      dockerfile: ./docker/Dockerfile  # مسیر فایل داکر فایل داخل پوشه docker
+      
+    container_name: ${CONTAINER_NAME}
+    hostname: ${CONTAINER_HOSTNAME}
+    env_file:
+      - .env
+    environment:
+      # ارسال متغیرهای محیطی زیرساختی به داخل کانتینر     
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - TZ=Asia/Tehran
+      
+      # ارسال متغیرهای بکاپ
+      - BACKUP_DIR=${BACKUP_DIR}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS}
+
+    ports:
+      # نگاشت پورت درخواستی: 5434
+      - "${POSTGRES_PORT}:5432"
+    
+    volumes:
+      - db_gateway_data:/var/lib/postgresql/18/data
+      # ماونت کردن پوشه کانفیگ‌های داده (YAML) - ریشه پروژه
+      - ./configs:/app/configs
+      # ماونت کردن پوشه اسکریپت‌ها - ریشه پروژه
+      - ./scripts:/app/scripts
+      # ماونت کردن پوشه بکاپ روی هاست - ریشه پروژه
+      - ./${BACKUP_DIR}:/app/${BACKUP_DIR}
+      # ماونت کردن فایل .env برای خواندن توسط اسکریپت پایتون
+      - ./.env:/app/.env:ro
+
+      # ماونت کردن فایل تنظیمات freetds به داخل کانتینر
+      - ./configs/freetds.conf:/etc/freetds.conf:ro
+
+      # - ./tmp:/tmp
+      
+    
+    # استفاده از اسکریپت راه‌اندازی سفارشی
+    command: ["/app/scripts/init-db.sh"]
+    
+    networks:
+      - db-gateway-network
+    restart: always
+
+  # سرویس PgBouncer (اختیاری برای Production Pooling)
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: pg_pgbouncer
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASES: gateway_db
+      POOL_MODE: transaction
+      AUTH_TYPE: md5
+    ports:
+      - "6432:5432"
+    depends_on:
+      - postgres
+    networks:
+      - db-gateway-network
+    restart: always
+
+volumes:
+  db_gateway_data:
+
+networks:
+  db-gateway-network:
+    driver: bridge

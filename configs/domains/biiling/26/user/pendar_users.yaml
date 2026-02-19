@@ -1,0 +1,22 @@
+username: ${PENDAR_ETL_USER}
+password: ${PENDAR_ETL_PASS}
+
+grants:
+  # دسترسی به دیتابیس billing_alborz_db
+  - database: ${__parent__}_${__current__}_db
+    
+    # دسترسی زمانی (اختیاری)
+    # access_time:
+    #   start: "08:00"
+    #   end: "18:00"
+
+    permissions:
+      # دسترسی به جدول
+      - table: hot_26.billparts
+      - table: hot_26.subscribers
+      
+      # دسترسی به ویو
+      - view: hot_26.vw_bill_parts_monthly_summary
+      
+      # دسترسی به تابع (Incremental Job)
+      - function: hot_26.fetch_billparts_batch

@@ -1,0 +1,19 @@
+# ---------------------------------------------------------
+# تنظیمات زیرساخت دیتابیس billing_alborz_db
+# ---------------------------------------------------------
+database:
+  # استفاده از متغیرهای مسیر: __parent__ = billing, __current__ = alborz
+  name: ${__parent__}_${__current__}_db 
+
+fdws:
+  # اتصال به سرور SQL Server
+  - name: hot26_alborz_link_local
+    type: tds
+    host: ${BILLING_DB_HOST_26}
+    port: ${BILLING_DB_PORT}
+    user: ${BILLING_DB_USER}
+    password: ${BILLING_DB_PASSWORD}
+    config_section: BILLING_26
+
+schemas:
+  - name: hot_26

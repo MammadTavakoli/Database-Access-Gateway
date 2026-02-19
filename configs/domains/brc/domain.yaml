@@ -1,0 +1,232 @@
+# ---------------------------------------------------------
+# دیتابیس منطقی پردازش فایل‌های کاهابی (سامانه پرداخت بانکی)
+# ---------------------------------------------------------
+database:
+  # 🟢 [Gateway/Local]: نام دیتابیسی که درون کانتینر پستگرس ایجاد می‌شود
+  name: brc_db
+  
+  # 🟢 [Gateway/Local]: نام کاربری مالک دیتابیس در پستگرس (مطابق نام کاربری شما)
+  owner: ${POSTGRES_USER}
+  
+  # 🟢 [Gateway/Local]: تایم‌زون پیش‌فرض برای تحلیل‌های زمانی و پیش‌بینی سری‌زمانی
+  timezone: Asia/Tehran
+
+# ---------------------------------------------------------
+# تعریف اتصالات FDW (ارتباط به منابع خارجی - دیتابیس بانکی)
+# ---------------------------------------------------------
+fdws:
+  - name: mssql_brc_link
+    # 🟢 [Gateway/Local]: نام اتصال محلی در پستگرس برای دیتابیس بانک مرکزی
+    type: tds                      # نوع درایور (tds_fdw برای SQL Server)
+    
+    # -------------------------------------------------
+    # تنظیمات مربوط به دیتابیس مبدا (Remote SQL Server بانک)
+    # -------------------------------------------------
+    host: ${BRC_DB_HOST}           # 🟡 [Source/Remote]: آی‌پی سرور SQL Server بانک (از .env)
+    port: ${BRC_DB_PORT}           # 🟡 [Source/Remote]: پورت سرور SQL Server (از .env)
+    database: ${BRC_DB_Name}       # 🟡 [Source/Remote]: نام دیتابیس واقعی (از .env)
+    user: ${BRC_DB_USER}           # 🟡 [Source/Remote]: نام کاربری دسترسی (از .env)
+    password: ${BRC_DB_PASSWORD}   # 🟡 [Source/Remote]: رمز عبور (از .env)
+    
+    # ✨ تنظیمات پروتکل برای رفع خطای DB-Library error 20018
+    # اگر سرور شما SQL Server 2019/2022 است، '7.4' مناسب است.
+    # اگر SQL Server 2008 است، از '7.1' یا '7.2' استفاده کنید.
+    tds_version: "7.4" 
+
+    # نام بخشی که در freetds.conf تعریف کرده‌اید
+    # اگر این را ندهید، اسکریپت از name: mssql_brc_link استفاده می‌کند
+    config_section: BRC
+# ---------------------------------------------------------
+# تعریف اسکیماها (در Gateway پستگرس)
+# ---------------------------------------------------------
+schemas:
+  # 🟢 [Gateway/Local]: اسکیمای داده‌های خام مستقیماً از سیستم بانکی
+  - name: external_raw
+  
+  # 🟢 [Gateway/Local]: اسکیمای داده‌های پاک‌سازی‌شده و آماده برای تحلیل
+  - name: staging
+  
+  # 🟢 [Gateway/Local]: اسکیمای مدل‌های تحلیلی و پیش‌بینی (برای ادغام با MLflow/Airflow)
+  - name: analytics
+
+# ---------------------------------------------------------
+# تعریف جداول خارجی (اتصال به داده‌های بانکی از طریق FDW)
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# تعریف جداول خارجی (اتصال به داده‌های بانکی از طریق FDW)
+# ---------------------------------------------------------
+tables:
+  # --- جدول خارجی: هدر فایل‌های کاهابی ---
+  - name: external_raw.kahabi_headers
+    type: foreign
+    server: mssql_brc_link
+    remote_schema: dbo
+    remote_table: KahabiHeaders
+    columns:
+      - {name: id, type: integer}
+      - {name: filename, type: text}
+      - {name: abbreviatedname, type: text}
+      - {name: abbreviatedcompany, type: text}
+      - {name: senddate, type: text}
+      - {name: readdatetime, type: timestamp}
+      - {name: headertitle, type: text}
+      - {name: servicecode, type: smallint}
+      - {name: subjectcode, type: smallint}
+      - {name: bankcode, type: integer}
+      - {name: totalamount, type: bigint}
+      - {name: rowcounts, type: integer}
+      - {name: senddateheader, type: text}
+
+  # --- جدول خارجی: ردیابی خطاها ---
+  - name: external_raw.kahabi_logs
+    type: foreign
+    server: mssql_brc_link
+    remote_schema: dbo
+    remote_table: KahabiLogs
+    columns:
+      - {name: id, type: integer}
+      - {name: file_name, type: text}
+      - {name: file_date, type: timestamp}
+      - {name: read_date_time, type: timestamp}
+      - {name: status_insert, type: boolean}
+      - {name: error_code, type: smallint}
+      - {name: error_comment, type: text}
+      - {name: central_bankcode, type: integer}
+      - {name: service_code, type: smallint}
+
+  # --- جدول خارجی: ردیف‌های نهایی پردازش‌شده کاهابی ---
+  - name: external_raw.kahabi_rows
+    type: foreign
+    server: mssql_brc_link
+    remote_schema: BrcDbNew.dbo
+    remote_table: KahabiRows
+    columns:
+      - {name: id_header, type: integer}
+      - {name: row_num, type: integer}
+      - {name: strings, type: text}
+      - {name: operating_branch_code, type: text}
+      - {name: payment_method, type: text}
+      - {name: pay_date, type: date}
+      - {name: billing_id, type: text}
+      - {name: payment_code, type: text}
+      - {name: tracking_code, type: text}
+      - {name: amount, type: bigint}
+      - {name: record_id, type: uuid}
+
+# ---------------------------------------------------------
+# تعریف ویوهای تحلیلی (لایه هوش تجاری و یادگیری ماشین)
+# ---------------------------------------------------------
+views:
+  # --- ویوی تجمیع روزانه پرداخت‌ها (برای پیش‌بینی سری‌زمانی) ---
+  - name: analytics.vw_daily_payments
+    # 🟢 [Gateway/Local]: ویوی آماده برای مدل‌های پیش‌بینی (Prophet/XGBoost)
+    sql: |
+      SELECT 
+        khr.pay_date AS payment_date,
+        kh.bankcode,
+        kh.servicecode,
+        COUNT(*) AS transaction_count,
+        SUM(khr.amount) AS total_amount_rial
+      FROM external_raw.kahabi_rows khr
+      JOIN external_raw.kahabi_headers kh 
+        ON khr.id_header = kh.id
+      WHERE khr.amount > 0 
+        AND khr.pay_date IS NOT NULL
+      GROUP BY 1, 2, 3
+      ORDER BY payment_date DESC
+
+  # --- ویوی ناهنجاری‌های پرداخت (برای ادغام با Isolation Forest) ---
+  - name: analytics.vw_anomaly_features
+    # 🟢 [Gateway/Local]: ویوی آماده برای مدل‌های تشخیص ناهنجاری
+    sql: |
+      SELECT 
+        khr.record_id,
+        khr.pay_date,
+        khr.amount,
+        kh.bankcode,
+        EXTRACT(DOW FROM khr.pay_date) AS day_of_week,
+        EXTRACT(DOY FROM khr.pay_date) AS day_of_year
+      FROM external_raw.kahabi_rows khr
+      JOIN external_raw.kahabi_headers kh 
+        ON khr.id_header = kh.id
+      WHERE khr.amount > 0 
+        AND khr.pay_date >= CURRENT_DATE - INTERVAL '30 days'
+
+  - name:  external_raw.vw_kahabi_headers
+    # 🟢 [Gateway/Local]: ویوی آماده برای مدل‌های تشخیص ناهنجاری
+    sql: |
+      SELECT 
+          id, 
+          filename, 
+          abbreviatedname, 
+          abbreviatedcompany,           
+          COALESCE(to_date(senddate, 'Mon DD YYYY'),senddate::date ) AS senddate, 
+          readdatetime, 
+          headertitle, 
+          servicecode, 
+          subjectcode, 
+          bankcode, 
+          totalamount, 
+          rowcounts, 
+          COALESCE(to_date(senddateheader, 'Mon DD YYYY'),senddateheader::date ) AS senddateheader
+      FROM external_raw.kahabi_headers;
+
+# ---------------------------------------------------------
+# تعریف کاربران و دسترسی‌ها (مدیریت امنیت داده‌های بانکی)
+# ---------------------------------------------------------
+users:
+  # 🟢 [Gateway/Local]: تحلیل‌گر داده (دسترسی محدود به داده‌های غیرحساس)
+  - name: ${BI_USER_NAME}
+    password: ${BI_USER_PASS}
+    
+    # 🟢 [Gateway/Local]: محدودیت زمانی دسترسی (ساعت کاری بانک)
+    access_time:
+      start: "08:00"
+      end: "10:30"
+    
+    permissions:
+      - view:
+          # 🟢 [Gateway/Local]: دسترسی فقط به ویوی تجمیع روزانه (بدون داده خام)
+          name: analytics.vw_daily_payments
+          columns: [payment_date, transaction_count, total_amount_rial]
+      
+      - table:
+          # 🟢 [Gateway/Local]: دسترسی محدود به لاگ‌های خطا (بدون جزئیات حساس)
+          name: external_raw.kahabi_logs
+          columns: [id, read_date_time, error_code]
+
+  # 🟢 [Gateway/Local]: مهندس یادگیری ماشین (دسترسی به ویژگی‌های مدل)
+  - name: ${ML_ENGINEER_NAME}
+    password: ${ML_ENGINEER_PASS}
+    # بدون محدودیت زمانی (برای اجرای خودکار مدل‌ها در غیر ساعات کاری)
+    permissions:
+      - view:
+          # 🟢 [Gateway/Local]: دسترسی کامل به ویوی ویژگی‌های ناهنجاری
+          name: analytics.vw_anomaly_features
+      
+      - view:
+          # 🟢 [Gateway/Local]: دسترسی به داده‌های تجمیع‌شده برای پیش‌بینی
+          name: analytics.vw_daily_payments
+
+      - view:
+          # 🟢 [Gateway/Local]: دسترسی به داده‌های تجمیع‌شده برای پیش‌بینی
+          name: external_raw.vw_kahabi_headers
+
+      - table:
+          # 🟢 [Gateway/Local]: دسترسی محدود به لاگ‌های خطا (بدون جزئیات حساس)
+          name: external_raw.kahabi_headers
+
+  # 🟢 [Gateway/Local]: اپراتور سیستم (دسترسی به ردیابی عملیاتی)
+  - name: ${SYSOP_NAME}
+    password: ${SYSOP_PASS}
+    permissions:      
+      - table:
+          # 🟢 [Gateway/Local]: دسترسی کامل به لاگ‌های پردازش
+          name: external_raw.kahabi_logs
+
+  - name: ${PENDAR_ETL_USER}
+    password: ${PENDAR_ETL_PASS}
+
+    permissions:
+      - table:
+          name: external_raw.kahabi_headers

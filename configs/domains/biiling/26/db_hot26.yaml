@@ -1,0 +1,185 @@
+# ---------------------------------------------------------
+# زیرپروژه صورت‌حساب استان البرز (hot_26)
+# ---------------------------------------------------------
+database:
+  # 🟢 [Dynamic Naming]: استفاده از متغیرهای سیستمی مسیر.
+  # __parent__ = billing
+  # __current__ = alborz
+  # نتیجه نهایی: billing_alborz_db
+  name: ${__parent__}_${__current__}_db 
+
+fdws:
+  # اتصال به سرور SQL Server
+  - name: hot26_alborz_link_local
+    type: tds
+    host: ${BILLING_DB_HOST_26}
+    port: ${BILLING_DB_PORT}
+    database: ${BILLING_DB_NAME_26}
+    user: ${BILLING_DB_USER}
+    password: ${BILLING_DB_PASSWORD}
+    config_section: BILLING_26
+
+schemas:
+  - name: hot_26  
+
+tables:
+  - name: hot_26.billparts
+    type: foreign
+    server: hot26_alborz_link_local
+    remote_schema: dbo
+    remote_table: billparts
+    columns:           
+      - {name: _billid, type: bigint}
+      - {name: _typeid, type: smallint}
+      - {name: subtype, type: smallint}
+      - {name: subtypeex, type: smallint}
+      - {name: amount, type: text}
+      - {name: _ownersid, type: integer}
+      - {name: ownerfromdate, type: timestamp}
+      - {name: ownertodate, type: timestamp}
+      - {name: count, type: text}
+      - {name: duration, type: numeric}
+      - {name: referenceid, type: integer}
+      - {name: persianyear, type: smallint}
+      - {name: persianmonth, type: smallint}
+      - {name: _stamperagentid, type: smallint}
+      - {name: _ownercycleid, type: smallint}
+      - {name: partialtax1, type: 'numeric(19,8)'}
+      - {name: partialtax2, type: 'numeric(19,8)'}
+
+  - name: hot_26.subscribers
+    type: foreign
+    server: hot26_alborz_link_local
+    remote_schema: dbo
+    remote_table: subscribers
+    columns:
+      - {name: id, type: bigint}
+      - {name: telno, type: bigint}
+      - {name: _previd, type: bigint}
+      - {name: name, type: text}
+      - {name: lname, type: text}
+      - {name: address, type: text}
+      - {name: postid, type: varchar}
+      - {name: _centerid, type: int}
+      - {name: _typeid, type: int}
+      - {name: createddate, type: timestamp}
+      - {name: createdcounterloc, type: bigint}
+      - {name: createdcounternat, type: bigint}
+      - {name: createdcountermob, type: bigint}
+      - {name: _credittypeid, type: int}
+      - {name: offloading, type: boolean}
+      - {name: offloadingdate, type: timestamp}
+      - {name: offloadingcounterloc, type: bigint}
+      - {name: offloadingcounternat, type: bigint}
+      - {name: offloadingcountermob, type: bigint}
+      - {name: offloadingkind, type: int}
+      - {name: _donateid, type: int}
+      - {name: armor, type: timestamp}
+      - {name: _headerid, type: int}
+      - {name: hascustomcenter, type: int}
+      - {name: rdate, type: timestamp}
+      - {name: lmloc, type: bigint}
+      - {name: lmnat, type: bigint}
+      - {name: lmmob, type: bigint}
+      - {name: lmrdate, type: timestamp}
+      - {name: _lastswstatusid, type: int}
+      - {name: _lastccstatusid, type: int}
+      - {name: _fundid, type: int}
+      - {name: _paytypeid, type: int}
+      - {name: telnobefore8digitsgrow, type: bigint}
+      - {name: _financialstatusid, type: int}
+      - {name: _specialratingtypeid, type: int}
+      - {name: _groupid, type: int}
+      - {name: divestitures, type: timestamp}
+      - {name: _lastadslstatusid, type: int}
+      - {name: rowversion, type: varchar}
+
+# ---------------------------------------------------------
+# توابع افزایشی (Incremental Jobs)
+# ---------------------------------------------------------
+incremental_jobs:
+  - name: hot_26.fetch_billparts_batch
+    target_table: hot_26.billparts
+    key_column: _billid
+    key_type: bigint
+    # 🟢 تعریف ستون‌های فیلتر اضافی
+    filter_columns:
+      - name: persianyear
+        type: int
+      - name: persianmonth
+        type: int
+    batch_size: 100000      
+    max_limit: 200000
+    allowed_consumers:
+      - ${PENDAR_ETL_USER}          
+
+  - name: hot_26.fetch_subscribers_batch
+    target_table: hot_26.subscribers
+    key_column: id
+    key_type: bigint
+    batch_size: 10000
+    max_limit: 30000  
+    allowed_consumers:
+      - ${PENDAR_ETL_USER}
+
+# ---------------------------------------------------------
+# توابع سفارشی (Custom Functions)
+# ---------------------------------------------------------
+custom_functions:
+  # تابع آماری (Generated)
+  - name: hot_26.get_billparts_stats
+    target_table: hot_26.billparts
+    return_columns:
+      - name: total_count
+        type: bigint
+        expression: count(*)
+      - name: min_id
+        type: bigint
+        expression: min(_billid)
+      - name: max_id
+        type: bigint
+        expression: max(_billid)
+    filter_columns:    
+      - name: _billid
+        filter_type: '>'
+        type: bigint     
+      - name: persianyear
+        filter_type: '='
+        type: int
+      - name: persianmonth
+        type: int
+        filter_type: '='
+    allowed_consumers:
+      - ${PENDAR_ETL_USER}
+
+  # تابع SQL خام (Raw SQL)
+  - name: hot_26.check_status_code
+    arguments:
+      - name: p_code
+        type: int
+    returns: boolean
+    language: plpgsql
+    sql: |
+      BEGIN
+        IF p_code BETWEEN 200 AND 299 THEN
+          RETURN true;
+        ELSE
+          RETURN false;
+        END IF;
+      END;
+    allowed_consumers:
+      - ${PENDAR_ETL_USER}
+
+# ---------------------------------------------------------
+# ویوهای تحلیلی
+# ---------------------------------------------------------
+views:
+  - name: hot_26.vw_bill_parts_monthly_summary
+    sql: |
+      SELECT 
+        PersianYear, 
+        PersianMonth, 
+        min(_billid) as min_id,
+        max(_billid) as max_id
+      FROM hot_26.billparts
+      GROUP BY PersianYear, PersianMonth
